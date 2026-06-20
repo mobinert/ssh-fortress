@@ -449,9 +449,8 @@ A: Near zero. inotify-driven log tailing uses 0 CPU when idle. Brute-force decis
 
 ## License
 
-Copyright (c) 2025 **Mobin Erteghaie** — All Rights Reserved.
 
-This software is proprietary. You may not copy, modify, distribute, or use it without written permission from the author. See [LICENSE](LICENSE) for full terms.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
