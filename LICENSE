@@ -1,59 +1,21 @@
-PROPRIETARY SOFTWARE LICENSE
+MIT License
 
-Copyright (c) 2025 Mobin Erteghaie
-All Rights Reserved.
+Copyright (c) 2026 Mobin Erteghaie
 
-TERMS AND CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. OWNERSHIP
-   This software, "SSH Fortress", including all source code, documentation,
-   configuration files, scripts, and associated materials (collectively,
-   the "Software"), is the exclusive property of the copyright holder
-   (Mobin Erteghaie). All intellectual property rights are reserved.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. RESTRICTIONS
-   You may NOT, without the prior written permission of the copyright holder:
-
-   a) Copy, reproduce, or duplicate the Software or any portion thereof;
-   b) Modify, adapt, alter, translate, or create derivative works based on
-      the Software;
-   c) Distribute, publish, sublicense, sell, rent, lease, or otherwise
-      transfer the Software or any rights therein to any third party;
-   d) Reverse engineer, disassemble, decompile, or otherwise attempt to
-      derive the source code of any compiled portion of the Software;
-   e) Remove or alter any proprietary notices, labels, or marks on the
-      Software;
-   f) Use the Software for commercial purposes without explicit written
-      authorization from the copyright holder.
-
-3. PERMITTED USE
-   You may view and read the source code solely for personal, educational,
-   or evaluation purposes. Any other use requires written permission from
-   the copyright holder.
-
-4. NO WARRANTIES
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
-   IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES,
-   OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
-   ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-   OTHER DEALINGS IN THE SOFTWARE.
-
-5. TERMINATION
-   Any unauthorized use of the Software will immediately and automatically
-   terminate any rights granted under this license and may result in civil
-   or criminal liability.
-
-6. GOVERNING LAW
-   This license shall be governed by and construed in accordance with
-   applicable intellectual property laws.
-
-7. CONTACT
-   To request permission for any use not covered above, contact:
-   https://github.com/mobin.ert
-
----
-Copyright (c) 2025 Mobin Erteghaie — All Rights Reserved.
-Unauthorized copying, distribution, or use of this Software,
-via any medium, is strictly prohibited.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
