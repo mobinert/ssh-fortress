@@ -1,0 +1,84 @@
+# SSH Fortress — Filebeat configuration
+# Forwards SSH logs + fortress structured events to Elasticsearch/Logstash
+
+filebeat.inputs:
+
+  # auth.log — raw SSH daemon events
+  - type: log
+    id: ssh-auth-log
+    enabled: true
+    paths:
+      - /var/log/auth.log
+      - /var/log/secure
+    fields:
+      source: ssh-fortress
+      log_type: auth
+      host: ${HOSTNAME}
+    fields_under_root: false
+    scan_frequency: 1s
+    close_inactive: 5m
+    multiline.pattern: '^[A-Z][a-z]{2}\s+[0-9]'
+    multiline.negate: true
+    multiline.match: after
+
+  # SSH Fortress structured JSONL events (already enriched)
+  - type: log
+    id: ssh-fortress-events
+    enabled: true
+    paths:
+      - /var/log/ssh-fortress/events.jsonl
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.expand_keys: true
+    fields:
+      source: ssh-fortress
+      log_type: fortress_event
+    fields_under_root: false
+    scan_frequency: 1s
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+  - decode_json_fields:
+      fields: ["message"]
+      process_array: false
+      max_depth: 2
+      overwrite_keys: false
+      add_error_key: true
+      when:
+        contains:
+          fields.log_type: "fortress_event"
+  - drop_fields:
+      fields: ["agent.ephemeral_id", "ecs"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  index: "ssh-fortress-%{+YYYY.MM.dd}"
+  # api_key: "id:api_key"
+  # username: "elastic"
+  # password: "changeme"
+  ssl:
+    enabled: true
+    verification_mode: certificate
+
+# Alternative: output to Logstash
+# output.logstash:
+#   hosts: ["logstash:5044"]
+
+setup.template.settings:
+  index.number_of_shards: 1
+  index.number_of_replicas: 0
+
+setup.ilm.enabled: true
+setup.ilm.rollover_alias: "ssh-fortress"
+setup.ilm.policy_name: "ssh-fortress-policy"
+
+logging.level: warning
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7

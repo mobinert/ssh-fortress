@@ -1,0 +1,51 @@
+[Unit]
+Description=SSH Fortress — SSH hardening, brute-force protection, and SIEM forwarder
+Documentation=https://github.com/your-org/ssh-fortress
+After=network.target sshd.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/ssh-fortress
+ExecStart=/opt/ssh-fortress/venv/bin/python /opt/ssh-fortress/main.py run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30
+
+# ── Hardening (Service itself is hardened) ───────────────────
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/ssh-fortress /var/lib/ssh-fortress /var/run
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=false
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service @network-io
+
+# ── Resource limits ──────────────────────────────────────────
+LimitNOFILE=65536
+LimitNPROC=512
+MemoryMax=256M
+CPUQuota=20%
+
+# ── Logging ──────────────────────────────────────────────────
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ssh-fortress
+
+# ── Environment ──────────────────────────────────────────────
+EnvironmentFile=-/etc/ssh-fortress/environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="SSH_FORTRESS_CONFIG=/etc/ssh-fortress/settings.yaml"
+
+[Install]
+WantedBy=multi-user.target

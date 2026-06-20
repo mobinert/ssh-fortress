@@ -1,0 +1,350 @@
+# SSH Fortress — Central Configuration
+# All modules read from this file via ConfigManager
+
+general:
+  hostname: "{{ ansible_hostname | default(hostname) }}"
+  log_level: INFO                  # DEBUG | INFO | WARNING | ERROR
+  data_dir: /var/lib/ssh-fortress
+  pid_file: /var/run/ssh-fortress.pid
+  run_as_user: root
+
+# ─────────────────────────────────────────────────────────────
+# SSH Hardening
+# ─────────────────────────────────────────────────────────────
+ssh:
+  config_path: /etc/ssh/sshd_config
+  backup_before_change: true
+  port: 22
+  listen_addresses:
+    - "0.0.0.0"
+    - "::"
+  # Cryptographic policy (CIS Level 2)
+  kex_algorithms:
+    - curve25519-sha256
+    - curve25519-sha256@libssh.org
+    - diffie-hellman-group16-sha512
+    - diffie-hellman-group18-sha512
+    - diffie-hellman-group-exchange-sha256
+  ciphers:
+    - chacha20-poly1305@openssh.com
+    - aes256-gcm@openssh.com
+    - aes128-gcm@openssh.com
+    - aes256-ctr
+    - aes192-ctr
+    - aes128-ctr
+  macs:
+    - hmac-sha2-512-etm@openssh.com
+    - hmac-sha2-256-etm@openssh.com
+    - umac-128-etm@openssh.com
+  host_key_algorithms:
+    - ssh-ed25519
+    - rsa-sha2-512
+    - rsa-sha2-256
+  # Access control
+  permit_root_login: "no"
+  password_auth: "no"
+  pubkey_auth: "yes"
+  challenge_response_auth: "no"
+  kerberos_auth: "no"
+  gssapi_auth: "no"
+  x11_forwarding: "no"
+  allow_tcp_forwarding: "no"
+  allow_agent_forwarding: "no"
+  permit_tunnel: "no"
+  print_motd: "no"
+  # Session limits
+  max_auth_tries: 3
+  max_sessions: 5
+  login_grace_time: 30
+  client_alive_interval: 300
+  client_alive_count_max: 2
+  # AllowUsers / AllowGroups (leave empty to not restrict)
+  allow_users: []
+  allow_groups: []
+  # Disable legacy subsystems
+  sftp_enabled: true
+  sftp_chroot: /home/%u
+
+# ─────────────────────────────────────────────────────────────
+# Brute Force Protection
+# ─────────────────────────────────────────────────────────────
+brute_force:
+  enabled: true
+  # In-process tracker (fast path, no disk I/O)
+  max_attempts: 5
+  observation_window: 300          # seconds
+  block_duration: 3600             # 1 hour initial ban
+  progressive_ban: true            # doubles on each repeat offence
+  max_ban_duration: 86400          # 24 hours cap
+  whitelist_ips:
+    - "127.0.0.1"
+    - "::1"
+  whitelist_cidrs: []
+  # fail2ban integration (optional, enhances kernel-level blocking)
+  fail2ban:
+    enabled: true
+    jail_name: sshd-fortress
+    findtime: 300
+    maxretry: 5
+    bantime: 3600
+
+# ─────────────────────────────────────────────────────────────
+# Rate Limiter (nftables / iptables)
+# ─────────────────────────────────────────────────────────────
+rate_limiter:
+  enabled: true
+  backend: nftables                # nftables | iptables
+  new_connections_per_second: 3
+  burst: 10
+  table_name: ssh_fortress
+  chain_name: ssh_ratelimit
+  syn_flood_protection: true
+  syn_cookies: true
+
+# ─────────────────────────────────────────────────────────────
+# Port Knocking
+# ─────────────────────────────────────────────────────────────
+port_knocking:
+  enabled: false                   # enable if SSH port is non-standard or extra layer needed
+  sequence: [7000, 8000, 9000]
+  timeout: 10                      # seconds to complete sequence
+  protocol: tcp                    # tcp | udp
+  auto_close: true
+  close_after: 30                  # seconds before closing the opened SSH port again
+
+# ─────────────────────────────────────────────────────────────
+# Geographic IP Blocking
+# ─────────────────────────────────────────────────────────────
+geo_blocker:
+  enabled: false
+  mmdb_path: /var/lib/ssh-fortress/GeoLite2-Country.mmdb
+  mode: allowlist                  # allowlist | blocklist
+  # allowlist: only these countries can connect
+  # blocklist: block connections FROM these countries
+  countries:
+    - US
+    - GB
+    - DE
+  auto_update_mmdb: true
+  mmdb_update_url: "https://download.maxmind.com/app/geoip_download"
+  mmdb_license_key: ""             # MaxMind license key
+
+# ─────────────────────────────────────────────────────────────
+# Log Aggregation & SIEM Forwarding
+# ─────────────────────────────────────────────────────────────
+logging:
+  auth_log_path: /var/log/auth.log # /var/log/secure on RHEL
+  ssh_log_path: /var/log/sshd.log
+  fortress_log_path: /var/log/ssh-fortress/fortress.log
+  rotate_size_mb: 50
+  rotate_keep: 10
+  json_format: true
+  # Local structured log (always on)
+  structured_log: /var/log/ssh-fortress/events.jsonl
+
+siem:
+  enabled: true
+  # Multiple backends — all active simultaneously
+  backends:
+    elasticsearch:
+      enabled: false
+      hosts:
+        - "https://localhost:9200"
+      index: "ssh-fortress-{YYYY.MM.dd}"
+      api_key: ""
+      username: ""
+      password: ""
+      tls_verify: true
+      ca_cert: ""
+      batch_size: 100
+      flush_interval: 5            # seconds
+
+    splunk:
+      enabled: false
+      hec_url: "https://splunk-server:8088/services/collector"
+      hec_token: ""
+      index: main
+      source: ssh-fortress
+      sourcetype: ssh:fortress
+      tls_verify: true
+      batch_size: 100
+      flush_interval: 5
+
+    syslog:
+      enabled: true                # always keep syslog on as fallback
+      host: "127.0.0.1"
+      port: 514
+      protocol: UDP                # UDP | TCP | TLS
+      format: CEF                  # CEF | RFC5424 | JSON | LEEF
+      facility: 4                  # AUTH
+      severity_map:
+        CRITICAL: 2
+        ERROR: 3
+        WARNING: 4
+        INFO: 6
+        DEBUG: 7
+      tls:
+        enabled: false
+        ca_cert: ""
+        client_cert: ""
+        client_key: ""
+
+    kafka:
+      enabled: false
+      bootstrap_servers:
+        - "kafka-broker:9092"
+      topic: ssh-fortress-events
+      security_protocol: PLAINTEXT # PLAINTEXT | SSL | SASL_SSL
+      sasl_mechanism: ""
+      sasl_username: ""
+      sasl_password: ""
+      batch_size: 500
+      linger_ms: 100
+
+    webhook:
+      enabled: false
+      url: ""
+      method: POST
+      headers:
+        Content-Type: application/json
+      auth_header: ""              # e.g. "Bearer <token>"
+      timeout: 10
+      retry_count: 3
+
+# ─────────────────────────────────────────────────────────────
+# Real-time Monitoring
+# ─────────────────────────────────────────────────────────────
+monitoring:
+  enabled: true
+  poll_interval: 1                 # seconds (inotify is used when available)
+  session_tracking: true
+  active_session_log: /var/lib/ssh-fortress/sessions.json
+  anomaly_detection:
+    enabled: true
+    # Flag if more than N unique IPs hit within window
+    ip_spray_threshold: 20
+    ip_spray_window: 60
+    # Flag login at unusual hours
+    unusual_hours: true
+    business_hours_start: 8        # 08:00 local time
+    business_hours_end: 18         # 18:00 local time
+    # Flag if same user authenticates from 2+ geo-locations within window
+    impossible_travel: true
+    impossible_travel_window: 3600
+
+# ─────────────────────────────────────────────────────────────
+# Two-Factor Authentication
+# ─────────────────────────────────────────────────────────────
+two_factor:
+  enabled: false                   # requires google-authenticator-libpam
+  issuer: "SSH Fortress"
+  require_for_groups: []           # empty = all users
+  exempt_keys: true                # pubkey auth bypasses 2FA
+
+# ─────────────────────────────────────────────────────────────
+# SSH Key Management
+# ─────────────────────────────────────────────────────────────
+key_management:
+  audit_enabled: true
+  audit_interval: 86400            # daily
+  min_key_bits:
+    rsa: 4096
+    ecdsa: 521
+    ed25519: 256                   # always 256
+  max_key_age_days: 365
+  revoke_expired: false            # set true to auto-revoke; USE WITH CARE
+  authorized_keys_paths:
+    - "~/.ssh/authorized_keys"
+    - /etc/ssh/authorized_keys/%u
+
+# ─────────────────────────────────────────────────────────────
+# IP Reputation (AbuseIPDB)
+# ─────────────────────────────────────────────────────────────
+ip_reputation:
+  enabled: false
+  abuseipdb_api_key: ""            # get free key at abuseipdb.com
+  block_threshold: 80              # 0-100 — block IPs scoring above this
+  cache_ttl_hours: 24
+  check_on_connect: true
+
+# ─────────────────────────────────────────────────────────────
+# Alerting
+# ─────────────────────────────────────────────────────────────
+alerting:
+  enabled: true
+  cooldown: 300                    # seconds between same-type alerts per channel
+  triggers:
+    brute_force_ban: true
+    auth_failure: true             # every failed attempt (noisy — set cooldown high)
+    auth_failure_spike: true
+    root_login_attempt: true
+    new_country: true
+    impossible_travel: true
+    key_expired: true
+    service_anomaly: true
+
+  # ── Telegram ────────────────────────────────────────────────
+  telegram:
+    enabled: false
+    bot_token: ""                  # from @BotFather
+    chat_id: ""                    # your personal or group chat_id
+    notify_on:
+      - AUTH_SUCCESS
+      - BRUTE_FORCE_BAN
+      - ROOT_ATTEMPT
+      - ANOMALY
+      - AUTH_FAILURE
+    silent_hours:                  # quiet hours — no messages during these
+      - "02:00-06:00"
+
+  # ── Email ───────────────────────────────────────────────────
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    use_tls: true
+    username: ""
+    password: ""                   # use an App Password for Gmail
+    from_addr: "ssh-fortress@yourdomain.com"
+    to_addrs:
+      - "you@yourdomain.com"
+    cooldown_minutes: 5
+    notify_on:
+      - AUTH_SUCCESS
+      - BRUTE_FORCE_BAN
+      - ROOT_ATTEMPT
+      - ANOMALY
+    daily_report: true             # send a daily summary at 08:00
+    daily_report_hour: 8
+
+  # ── Discord ─────────────────────────────────────────────────
+  discord:
+    enabled: false
+    webhook_url: ""
+    username: "SSH Fortress"
+    notify_on:
+      - AUTH_SUCCESS
+      - BRUTE_FORCE_BAN
+      - ROOT_ATTEMPT
+      - ANOMALY
+
+  # ── Slack ────────────────────────────────────────────────────
+  slack:
+    enabled: false
+    webhook_url: ""
+    channel: "#security-alerts"
+    username: "SSH Fortress"
+    icon_emoji: ":shield:"
+
+  # ── PagerDuty ────────────────────────────────────────────────
+  pagerduty:
+    enabled: false
+    routing_key: ""
+    severity: warning              # critical | error | warning | info
+
+  # ── Generic Webhook ──────────────────────────────────────────
+  webhook:
+    enabled: false
+    url: ""
+    headers: {}
+    auth_header: ""               # e.g. "Bearer your-token"

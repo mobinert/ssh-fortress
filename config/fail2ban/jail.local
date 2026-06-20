@@ -1,0 +1,32 @@
+# SSH Fortress — fail2ban jail configuration
+# Place at /etc/fail2ban/jail.d/ssh-fortress.local
+
+[DEFAULT]
+bantime  = 3600
+findtime = 300
+maxretry = 5
+backend  = systemd
+usedns   = no
+
+# Notify on ban (optional: wire to your SIEM via actionstart/actionban)
+action = %(action_mwl)s
+
+[sshd-fortress]
+enabled  = true
+port     = ssh,22
+filter   = sshd-fortress
+logpath  = /var/log/auth.log
+           /var/log/syslog
+           /var/log/secure
+maxretry = 5
+findtime = 300
+bantime  = 3600
+bantime.increment = true
+bantime.rndtime   = 2048
+bantime.maxtime   = 86400
+bantime.formula   = ban.Time * math.exp(float(ban.Count+1)*banFactor)/math.exp(1*banFactor)
+bantime.factor    = 2
+
+# Progressive ban: doubles each offence up to 24 hours
+action = nftables-multiport[name=SSH, port="ssh", protocol=tcp]
+         %(action_mwl)s

@@ -1,0 +1,28 @@
+# Core
+pyyaml>=6.0
+click>=8.1
+rich>=13.7
+colorlog>=6.8
+
+# Networking / security
+cryptography>=42.0
+netaddr>=0.10
+paramiko>=3.4
+
+# GeoIP (optional — needed for geo_blocker)
+geoip2>=4.8
+maxminddb>=2.6
+
+# SIEM backends (optional — install what you use)
+elasticsearch>=8.12
+# kafka-python>=2.0    # uncomment for Kafka
+
+# System monitoring
+psutil>=5.9
+
+# 2FA (optional)
+pyotp>=2.9
+qrcode>=7.4
+
+# Misc
+python-dotenv>=1.0
