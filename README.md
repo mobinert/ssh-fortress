@@ -5,10 +5,11 @@
 <p><strong>Advanced modular SSH hardening, brute-force protection, and SIEM integration</strong></p>
 
 <p>
+  <img src="https://img.shields.io/badge/version-2.0.0-8b5cf6?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python" />
   <img src="https://img.shields.io/badge/Platform-Linux-lightgrey?style=for-the-badge&logo=linux" />
-  <img src="https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Status-Active-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/tests-37%20passing-2ea043?style=for-the-badge" />
 </p>
 
 <p>
@@ -27,11 +28,15 @@ SSH Fortress is a **production-ready SSH security framework** that does everythi
 
 - Hardens your SSH daemon to **CIS Level 2 / NSA** standards automatically
 - Detects and bans brute-force attackers **before** they exhaust your auth attempts
+- Scores every source IP with a **behavioural threat engine** and bans adaptively 🆕
 - Forwards every SSH event to your **SIEM** (Elasticsearch, Splunk, Syslog, Kafka)
-- Alerts you instantly on **Telegram, Email, Discord, or Slack** when something happens
+- Alerts you instantly on **Telegram, Email, Discord, Slack, or ntfy** 🆕
+- Exposes **Prometheus metrics** for Grafana / Alertmanager 🆕
+- Generates a designed **HTML / JSON security report** on demand 🆕
 - Detects **anomalies** — impossible travel, IP sprays, unusual login hours, root attempts
 - **Audits your SSH keys** for weak, old, or duplicate entries
 - Checks incoming IPs against **AbuseIPDB** and pre-bans known attackers
+- **Validates your config** before you rely on it (`doctor`) 🆕
 
 Everything is modular — enable only what you need, configure everything from a single YAML file.
 
@@ -55,6 +60,23 @@ Everything is modular — enable only what you need, configure everything from a
 - Optional **fail2ban** integration for extra redundancy
 - Whitelist by IP or CIDR
 - Manual `ban` / `unban` via CLI
+
+### 🧠 Behavioural Threat Scoring (adaptive banning) 🆕
+Where brute-force protection asks a single yes/no question ("has this IP passed N failures?"), the threat scorer builds a **behavioural profile** of each source IP and blends weighted signals into one **0–100 risk score**:
+
+| Signal | What it catches | Max weight |
+|---|---|---|
+| Failure velocity | Rapid repeated failures | 40 |
+| Username spraying | Many *distinct* usernames from one IP | 30 |
+| Invalid-user probing | Hits against users that don't exist | 24 |
+| Root targeting | Any attempt against `root` | 30 |
+| Reputation | Flagged by AbuseIPDB | 50 |
+| Off-hours activity | Connections outside business hours | 6 |
+| Known-good discount | The IP has authenticated successfully before | −40 |
+
+- **Adaptive banning:** a slow, distributed spray that never trips the raw failure counter still gets banned once its behaviour crosses the threshold (default 70).
+- Every weight is configurable in `settings.yaml`; the score decays over a rolling window.
+- Verdict bands: `LOW → SUSPICIOUS → HIGH → CRITICAL`.
 
 ### 🔥 Rate Limiting
 - **nftables** (preferred) or **iptables** backend
@@ -94,6 +116,7 @@ Everything is modular — enable only what you need, configure everything from a
 | **Telegram** | Login success, brute force ban, root attempt, anomalies, failed login |
 | **Email** | Login success, brute force ban, root attempt, anomalies, daily digest |
 | **Discord** | Login success, brute force ban, root attempt, anomalies |
+| **ntfy** 🆕 | Any event — instant push to the ntfy app, no bot/account needed |
 | **Slack** | All security events |
 | **PagerDuty** | Critical events |
 | **Webhook** | All events |
@@ -134,6 +157,23 @@ Features:
 - Top attackers list
 - Session peak tracking
 - Persisted to JSON every 30 seconds
+
+### 📟 Prometheus Metrics 🆕
+- Zero-dependency `/metrics` endpoint (stdlib only — no push gateway)
+- Counters + gauges: attempts, successes, failures, bans, root attempts, anomalies, active/peak sessions
+- Per-IP labelled series: `ssh_fortress_attacker_failures{ip=…}` and `ssh_fortress_threat_score{ip=…}`
+- Drops straight into Grafana / Alertmanager: `sudo python main.py metrics`
+
+### 📄 Security Reports 🆕
+- `sudo python main.py report` — a summary table in your terminal
+- `--html` — a designed, self-contained HTML report (open/email/commit it)
+- `--json` — machine-readable report for pipelines
+- Built from the persisted stats: top attackers, ban counts, failure rate, anomalies
+
+### 🩺 Configuration Doctor 🆕
+- `sudo python main.py doctor` validates `settings.yaml` before you depend on it
+- Catches: channels enabled with no credentials, SIEM backends with no endpoint, out-of-range thresholds, a bind port that isn't a valid port
+- Non-zero exit on any blocking error — safe to wire into CI / pre-deploy checks
 
 ---
 
@@ -226,11 +266,22 @@ sudo python main.py run
 # CIS compliance audit of current sshd_config
 sudo python main.py audit
 
+# Validate settings.yaml (mis-configured channels, SIEM, thresholds)
+sudo python main.py doctor
+
 # Live status (health + active sessions)
 sudo python main.py status
 
 # Event statistics + top attackers
 sudo python main.py stats
+
+# Security report — terminal, or export
+sudo python main.py report
+sudo python main.py report --html -o report.html
+sudo python main.py report --json -o report.json
+
+# Prometheus metrics exporter (scrape /metrics)
+sudo python main.py metrics
 
 # Manual IP management
 sudo python main.py ban 1.2.3.4 --duration 86400
@@ -242,6 +293,10 @@ sudo python main.py keys audit
 # Test your notification channels
 sudo python main.py test telegram
 sudo python main.py test email
+sudo python main.py test ntfy
+
+# Version
+python main.py --version
 ```
 
 ---
@@ -268,7 +323,8 @@ ssh-fortress/
 ├── modules/
 │   ├── core/
 │   │   ├── config_manager.py           # YAML loader, dotted-key access, template vars
-│   │   └── logger.py                   # Structured JSON logger, coloured console
+│   │   ├── logger.py                   # Structured JSON logger, coloured console
+│   │   └── config_validator.py         # settings.yaml pre-flight checks (doctor)  🆕
 │   │
 │   ├── hardening/
 │   │   ├── ssh_config.py               # sshd_config writer + CIS auditor
@@ -280,7 +336,8 @@ ssh-fortress/
 │   │   ├── rate_limiter.py             # nftables/iptables rate limit + SYN flood
 │   │   ├── geo_blocker.py              # MaxMind country allow/block list
 │   │   ├── port_knocker.py             # TCP/UDP knock sequence daemon
-│   │   └── ip_reputation.py            # AbuseIPDB pre-ban check
+│   │   ├── ip_reputation.py            # AbuseIPDB pre-ban check
+│   │   └── threat_scorer.py            # behavioural 0-100 risk score (adaptive ban)  🆕
 │   │
 │   ├── logging/
 │   │   ├── log_parser.py               # Pure-regex auth.log parser → SSHEvent
@@ -290,19 +347,28 @@ ssh-fortress/
 │   ├── monitoring/
 │   │   ├── session_monitor.py          # Live session tracking → sessions.json
 │   │   ├── anomaly_detector.py         # IP spray, travel, hours, spikes, root
-│   │   └── health_checker.py           # sshd / nftables / fail2ban / disk / SIEM health
+│   │   ├── health_checker.py           # sshd / nftables / fail2ban / disk / SIEM health
+│   │   └── metrics_exporter.py         # Prometheus /metrics endpoint  🆕
 │   │
 │   ├── alerting/
 │   │   ├── alert_manager.py            # Rate-limited Slack/PagerDuty/Webhook routing
 │   │   ├── telegram_notifier.py        # Telegram Bot API (async queue, silent hours)
 │   │   ├── email_notifier.py           # HTML email (login/ban/anomaly/daily digest)
-│   │   └── discord_notifier.py         # Discord webhook with rich embeds
+│   │   ├── discord_notifier.py         # Discord webhook with rich embeds
+│   │   └── ntfy_notifier.py            # ntfy.sh push notifications  🆕
 │   │
 │   ├── key_management/
 │   │   └── key_auditor.py              # authorized_keys scanner (weak/old/dup keys)
 │   │
-│   └── stats/
-│       └── stats_tracker.py            # Event counters, top attackers, daily reset
+│   ├── stats/
+│   │   └── stats_tracker.py            # Event counters, top attackers, daily reset
+│   │
+│   └── reporting/                       # 🆕
+│       └── html_report.py              # HTML + JSON security report builders
+│
+├── tests/                               # unit tests (pytest — 37 tests)  🆕
+├── conftest.py
+├── pytest.ini
 │
 ├── scripts/
 │   ├── install.sh                      # Full install (Ubuntu/Debian/RHEL/Rocky)

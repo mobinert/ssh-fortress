@@ -6,14 +6,18 @@ Usage:
   sudo python main.py harden       [--dry-run]
   sudo python main.py run                         # daemon
   sudo python main.py audit
+  sudo python main.py doctor                       # validate settings.yaml
   sudo python main.py status
+  sudo python main.py stats
+  sudo python main.py report [--html | --json] [-o file]
+  sudo python main.py metrics                      # Prometheus exporter
   sudo python main.py ban   <ip>   [--duration 3600]
   sudo python main.py unban <ip>
   sudo python main.py keys  audit
-  sudo python main.py test  telegram
-  sudo python main.py test  email
-  sudo python main.py stats
+  sudo python main.py test  telegram | email | ntfy
 """
+
+from __future__ import annotations
 
 import os
 import signal
@@ -25,23 +29,25 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from modules.core import ConfigManager, get_logger
+from modules.core import ConfigManager, ConfigValidator, get_logger, __version__
 from modules.hardening import SSHConfigHardener, CryptoPolicy, PAMConfigurator
-from modules.protection import BruteForceProtector, RateLimiter, GeoBlocker, PortKnocker
+from modules.protection import BruteForceProtector, RateLimiter, GeoBlocker, PortKnocker, ThreatScorer
 from modules.protection.ip_reputation import IPReputationChecker
 from modules.logging import LogAggregator, SIEMForwarder
-from modules.monitoring import SessionMonitor, AnomalyDetector, HealthChecker
-from modules.alerting import AlertManager
+from modules.monitoring import SessionMonitor, AnomalyDetector, HealthChecker, MetricsExporter, render_metrics
+from modules.alerting import AlertManager, NtfyNotifier
 from modules.alerting.telegram_notifier import TelegramNotifier
 from modules.alerting.email_notifier import EmailNotifier
 from modules.alerting.discord_notifier import DiscordNotifier
 from modules.key_management import KeyAuditor
 from modules.stats import StatsTracker
+from modules.reporting import build_html_report, build_json_report
 
 console = Console()
 
 
 @click.group()
+@click.version_option(__version__, "-V", "--version", prog_name="ssh-fortress")
 @click.option("--config", "-c", default=None, help="Path to settings.yaml")
 @click.pass_context
 def cli(ctx, config):
@@ -104,16 +110,20 @@ def run(ctx):
                           default="/var/log/ssh-fortress/fortress.log"),
     )
 
-    log.info("SSH Fortress starting", version="1.0.0")
-    console.print("[bold blue]SSH Fortress[/bold blue] starting...\n")
+    log.info("SSH Fortress starting", version=__version__)
+    console.print(f"[bold blue]SSH Fortress[/bold blue] v{__version__} starting...\n")
 
     # stats tracker
     stats = StatsTracker(cfg)
+
+    # behavioural threat scorer (adaptive banning)
+    threat = ThreatScorer(cfg)
 
     # notification channels
     telegram = TelegramNotifier(cfg)
     email    = EmailNotifier(cfg)
     discord  = DiscordNotifier(cfg)
+    ntfy     = NtfyNotifier(cfg)
 
     # ip reputation (optional AbuseIPDB check)
     ip_rep = IPReputationChecker(cfg)
@@ -124,6 +134,7 @@ def run(ctx):
     def fire_alerts(event_type, details):
         """Route to all channels based on event type."""
         alert_mgr.send(event_type, details)
+        ntfy.send_event("ANOMALY" if event_type.startswith("ANOMALY_") else event_type, details)
         ip = details.get("src_ip", "")
         user = details.get("username", "unknown")
 
@@ -186,6 +197,15 @@ def run(ctx):
     health = HealthChecker(cfg, on_fail=lambda c, ok, msg: log.warning("HEALTH_FAIL", check=c))
     health.start()
 
+    # Prometheus metrics endpoint (optional — scrape /metrics)
+    metrics = MetricsExporter(cfg, collector=lambda: render_metrics(
+        stats.get_summary(),
+        banned_count=len(bf.banned_ips()),
+        top_attackers=stats.get_top_attackers(10),
+        top_threats=threat.top(10),
+    ))
+    metrics.start()
+
     # daily report scheduler (simple thread)
     if cfg.get("alerting", "email", "daily_report", default=False):
         _start_daily_report(email, stats, cfg)
@@ -200,27 +220,46 @@ def run(ctx):
         if event.src_ip and ip_rep.enabled:
             is_bad, score, country = ip_rep.check(event.src_ip)
             if is_bad:
+                threat.record(event.src_ip, "failure", event.username,
+                              reputation_flagged=True, when=event.timestamp)
                 log.security_event("IP_REPUTATION_BAN", src_ip=event.src_ip,
                                    score=score, country=country, action="BAN")
                 bf.ban(event.src_ip, reason=f"AbuseIPDB score={score}")
                 return
 
         if event.event_type in (EventType.AUTH_FAILURE, EventType.INVALID_USER):
-            # count per-ip attempts
+            kind = "invalid" if event.event_type == EventType.INVALID_USER else "failure"
             attempts = _get_attempt_count(bf, event.src_ip)
             banned = bf.record_failure(event.src_ip, event.username)
+            risk = threat.record(event.src_ip, kind, event.username, when=event.timestamp)
             stats.record_login_failed(event.username, event.src_ip)
+
+            # adaptive banning: behaviour looks malicious even below the raw
+            # failure threshold (username spraying, invalid-user probing, …)
+            if not banned and threat.should_ban(event.src_ip):
+                bf.ban(event.src_ip, reason=f"threat-score={risk:.0f}")
+                banned = True
+                fire_alerts("THREAT_BAN", {
+                    "src_ip": event.src_ip,
+                    "username": event.username,
+                    "threat_score": round(risk, 1),
+                    "verdict": threat.classify(risk),
+                })
+
             if not banned:
                 fire_alerts("AUTH_FAILURE", {
                     "src_ip": event.src_ip,
                     "username": event.username,
                     "attempt_num": attempts + 1,
                     "max_attempts": cfg.get("brute_force", "max_attempts", default=5),
+                    "threat_score": round(risk, 1),
                 })
-            log.security_event("AUTH_FAILURE", src_ip=event.src_ip, username=event.username)
+            log.security_event("AUTH_FAILURE", src_ip=event.src_ip,
+                               username=event.username, threat_score=round(risk, 1))
 
         elif event.event_type in (EventType.AUTH_SUCCESS, EventType.PUBKEY_ACCEPTED):
             bf.record_success(event.src_ip)
+            threat.record(event.src_ip, "success", event.username, when=event.timestamp)
             stats.record_login_success(event.username, event.src_ip, event.method)
             fire_alerts("AUTH_SUCCESS", {
                 "src_ip": event.src_ip,
@@ -230,8 +269,9 @@ def run(ctx):
             })
 
         elif event.event_type == EventType.ROOT_ATTEMPT:
+            risk = threat.record(event.src_ip, "root", "root", when=event.timestamp)
             stats.record_root_attempt(event.src_ip)
-            fire_alerts("ROOT_ATTEMPT", {"src_ip": event.src_ip})
+            fire_alerts("ROOT_ATTEMPT", {"src_ip": event.src_ip, "threat_score": round(risk, 1)})
 
         # update session count in stats
         stats.set_active_sessions(sessions.session_count())
@@ -247,9 +287,17 @@ def run(ctx):
         "Telegram" if telegram.enabled else "",
         "Email"    if email.enabled    else "",
         "Discord"  if discord.enabled  else "",
+        "ntfy"     if ntfy.enabled     else "",
         "Slack"    if cfg.get("alerting", "slack", "enabled") else "",
         "SIEM"     if cfg.get("siem", "enabled") else "",
     ])) or "none configured")
+    if threat.enabled:
+        console.print("  Adaptive banning: [green]on[/green] "
+                      f"(threat ban threshold {cfg.get('threat_scoring', 'ban_threshold', default=70)})")
+    if metrics.enabled:
+        console.print(f"  Metrics: [green]http://{cfg.get('metrics', 'bind', default='127.0.0.1')}"
+                      f":{cfg.get('metrics', 'port', default=9822)}"
+                      f"{cfg.get('metrics', 'path', default='/metrics')}[/green]")
     console.print("  Press Ctrl+C to stop.\n")
 
     log.info("All modules running")
@@ -259,6 +307,7 @@ def run(ctx):
         aggregator.stop()
         knocker.stop()
         health.stop()
+        metrics.stop()
         console.print("[yellow]SSH Fortress stopped.[/yellow]")
         sys.exit(0)
 
@@ -323,6 +372,32 @@ def audit(ctx):
     console.print(t)
     failed = sum(1 for f in findings if not f["compliant"])
     console.print(f"\n{len(findings)} checks — [green]{len(findings)-failed} passed[/green]  [red]{failed} failed[/red]")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# doctor
+# ─────────────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.pass_context
+def doctor(ctx):
+    """Validate settings.yaml — catch mis-configured channels, SIEM, thresholds."""
+    findings = ConfigValidator(ctx.obj["cfg"]).validate()
+
+    t = Table(title="SSH Fortress — Configuration Doctor", show_lines=False)
+    t.add_column("Level")
+    t.add_column("Section", style="cyan")
+    t.add_column("Finding")
+    style = {"ERROR": "[red]ERROR[/red]", "WARN": "[yellow]WARN[/yellow]", "OK": "[green]OK[/green]"}
+    for f in sorted(findings, key=lambda x: {"ERROR": 0, "WARN": 1, "OK": 2}.get(x.level, 3)):
+        t.add_row(style.get(f.level, f.level), f.section, f.message)
+    console.print(t)
+
+    errors = sum(1 for f in findings if f.level == "ERROR")
+    warns = sum(1 for f in findings if f.level == "WARN")
+    console.print(f"\n[red]{errors} error(s)[/red]  [yellow]{warns} warning(s)[/yellow]")
+    if errors:
+        sys.exit(1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -393,6 +468,63 @@ def stats(ctx):
                 data.get("last_seen", "N/A"),
             )
         console.print(t2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# report
+# ─────────────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--html", "as_html", is_flag=True, help="Write a self-contained HTML report")
+@click.option("--json", "as_json", is_flag=True, help="Write a JSON report")
+@click.option("--output", "-o", default=None, help="Output file path")
+@click.pass_context
+def report(ctx, as_html, as_json, output):
+    """Generate a security report (text to console, or --html / --json to a file)."""
+    cfg = ctx.obj["cfg"]
+    tracker = StatsTracker(cfg)
+    summary = tracker.get_summary()
+    top = tracker.get_top_attackers(15)
+
+    if as_json:
+        _emit_report(build_json_report(summary, top), output, "ssh-fortress-report.json")
+    elif as_html:
+        _emit_report(build_html_report(summary, top), output, "ssh-fortress-report.html")
+    else:
+        t = Table(title="SSH Fortress — Security Report")
+        t.add_column("Metric")
+        t.add_column("Value", style="cyan")
+        for k, v in summary.items():
+            t.add_row(k.replace("_", " ").title(), str(v))
+        console.print(t)
+        console.print("\n[dim]Tip: add --html or --json to export a full report.[/dim]")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.pass_context
+def metrics(ctx):
+    """Run the Prometheus metrics exporter in the foreground (scrape /metrics)."""
+    cfg = ctx.obj["cfg"]
+    if not cfg.get("metrics", "enabled", default=False):
+        console.print("[yellow]metrics.enabled is false in settings.yaml — enable it first.[/yellow]")
+        return
+    tracker = StatsTracker(cfg)
+    exporter = MetricsExporter(cfg, collector=lambda: render_metrics(
+        tracker.get_summary(), top_attackers=tracker.get_top_attackers(10)))
+    exporter.start()
+    bind = cfg.get("metrics", "bind", default="127.0.0.1")
+    port = cfg.get("metrics", "port", default=9822)
+    path = cfg.get("metrics", "path", default="/metrics")
+    console.print(f"[green]Metrics exporter running:[/green] http://{bind}:{port}{path}  (Ctrl+C to stop)")
+    try:
+        signal.pause()
+    except KeyboardInterrupt:
+        exporter.stop()
+        console.print("[yellow]Exporter stopped.[/yellow]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -490,6 +622,18 @@ def test_email(ctx):
     console.print("[green]Test email sent — check your inbox.[/green]")
 
 
+@test.command("ntfy")
+@click.pass_context
+def test_ntfy(ctx):
+    """Send a test ntfy.sh push notification."""
+    n = NtfyNotifier(ctx.obj["cfg"])
+    if not n.enabled:
+        console.print("[yellow]ntfy is disabled in settings.yaml[/yellow]")
+        return
+    n.test()
+    console.print("[green]Test push sent — check the ntfy app / your topic.[/green]")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -498,6 +642,12 @@ def _need_root():
     if os.geteuid() != 0:
         console.print("[red]Must run as root (sudo python main.py ...)[/red]")
         sys.exit(1)
+
+
+def _emit_report(content: str, output: str | None, default_name: str) -> None:
+    path = Path(output) if output else Path.cwd() / default_name
+    path.write_text(content)
+    console.print(f"[green]Report written:[/green] {path}")
 
 
 if __name__ == "__main__":

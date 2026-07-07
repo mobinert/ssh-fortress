@@ -268,6 +268,39 @@ ip_reputation:
   check_on_connect: true
 
 # ─────────────────────────────────────────────────────────────
+# Behavioural Threat Scoring (adaptive banning)
+# ─────────────────────────────────────────────────────────────
+# Blends several behavioural signals into a 0-100 risk score per source IP so
+# slow/distributed sprays get banned before they trip the raw failure counter.
+threat_scoring:
+  enabled: true
+  window: 900                      # seconds of behaviour to consider (15 min)
+  ban_threshold: 70                # 0-100 — auto-ban once an IP crosses this
+  business_hours_start: 8
+  business_hours_end: 18
+  # Per-signal weights — each value is that signal's MAX contribution.
+  weights:
+    failure: 8
+    failure_cap: 40
+    distinct_user: 10
+    distinct_user_cap: 30
+    invalid_user: 8
+    invalid_user_cap: 24
+    root_attempt: 30
+    reputation: 50
+    off_hours: 6
+    known_good_discount: 40
+
+# ─────────────────────────────────────────────────────────────
+# Prometheus Metrics Exporter
+# ─────────────────────────────────────────────────────────────
+metrics:
+  enabled: false
+  bind: "127.0.0.1"                # bind to localhost; scrape via node exporter/tunnel
+  port: 9822
+  path: /metrics
+
+# ─────────────────────────────────────────────────────────────
 # Alerting
 # ─────────────────────────────────────────────────────────────
 alerting:
@@ -327,6 +360,14 @@ alerting:
       - BRUTE_FORCE_BAN
       - ROOT_ATTEMPT
       - ANOMALY
+
+  # ── ntfy.sh ──────────────────────────────────────────────────
+  ntfy:
+    enabled: false
+    server: "https://ntfy.sh"      # or your self-hosted ntfy server
+    topic: ""                      # the topic you subscribe to in the ntfy app
+    token: ""                      # optional access token (sent as Bearer)
+    priority: 3                    # 1 (min) .. 5 (max) default priority
 
   # ── Slack ────────────────────────────────────────────────────
   slack:

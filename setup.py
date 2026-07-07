@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="ssh-fortress",
-    version="1.0.0",
-    description="Modular SSH hardening, brute-force protection, and SIEM integration",
+    version="2.0.0",
+    description="Modular SSH hardening, adaptive brute-force protection, threat scoring, SIEM + metrics",
     packages=find_packages(exclude=["tests*"]),
     python_requires=">=3.10",
     install_requires=[

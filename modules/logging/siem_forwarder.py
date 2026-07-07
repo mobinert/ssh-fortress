@@ -219,8 +219,15 @@ class _SyslogBackend(_BaseBackend):
 
     def _to_cef(self, doc: dict) -> str:
         sev = self._sev_map.get(doc.get("level", "INFO"), 6)
+
+        def _cef_escape(value) -> str:
+            # CEF extension values must escape '=' and '|' with a backslash.
+            # (Kept out of the f-string: backslashes in f-string expressions are
+            # a SyntaxError before Python 3.12.)
+            return str(value).replace("=", "\\=").replace("|", "\\|")
+
         ext = " ".join(
-            f"{k}={str(v).replace('=', '\\=').replace('|', '\\|')}"
+            f"{k}={_cef_escape(v)}"
             for k, v in doc.items()
             if k not in ("ts", "event_type", "host")
         )

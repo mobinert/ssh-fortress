@@ -1,0 +1,7 @@
+# Minimal dependency set to import SSH Fortress and run the unit-test suite.
+# (The full runtime/optional deps live in requirements.txt / setup.py extras.)
+pyyaml>=6.0
+click>=8.1
+rich>=13.7
+colorlog>=6.8
+pytest>=8.0
