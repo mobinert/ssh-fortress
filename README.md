@@ -513,6 +513,15 @@ A: Near zero. inotify-driven log tailing uses 0 CPU when idle. Brute-force decis
 
 ---
 
+## More tools by the author
+
+| Tool | Platform | What it does |
+|------|----------|--------------|
+| [**HORUS**](https://github.com/mobinert/HORUS) | Windows | IOC enrichment + PE static analysis in one zero-dependency exe |
+| [**machunt**](https://github.com/mobinert/machunt) | macOS | Read-only threat hunting & compromise assessment — 20 modules |
+
+---
+
 ## License
 
 
